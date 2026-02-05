@@ -12,7 +12,17 @@
     <header class="header">
       <h1 class="header__title">Task Manager</h1>
       <div class="header__actions">
+        <div class="header__inbox-wrap">
+          <button type="button" class="btn btn--ghost header__inbox-btn" id="btn-inbox-quick" aria-label="Быстро в инбокс">+ В инбокс</button>
+          <span class="inbox-badge" id="inbox-badge" aria-live="polite" hidden>0</span>
+          <button type="button" class="btn btn--primary header__empty-inbox-btn" id="btn-empty-inbox" aria-label="Опустошить инбокс" disabled>Опустошить инбокс</button>
+          <div class="inbox-quick glass glass--elevated" id="inbox-quick-popover" hidden role="dialog" aria-label="Добавить в инбокс">
+            <input type="text" class="input inbox-quick__input" id="inbox-quick-input" placeholder="Надо бы… или идея" autocomplete="off">
+            <button type="button" class="btn btn--primary inbox-quick__btn" id="inbox-quick-submit">В инбокс</button>
+          </div>
+        </div>
         <button type="button" class="btn btn--primary" id="btn-open-triggers" aria-label="Спусковые крючки">Спусковые крючки</button>
+        <button type="button" class="btn btn--ghost" id="btn-open-calendar" aria-label="Календарь">Календарь</button>
         <button type="button" class="btn btn--ghost header__settings" id="btn-open-settings" aria-label="Настройки">⚙</button>
       </div>
     </header>
@@ -32,6 +42,9 @@
         </div>
       </section>
 
+      <aside class="board-tip glass" id="board-tip" aria-label="Подсказка">
+        <p class="board-tip__text" id="board-tip-text">Тяжёлые по мысленной нагрузке задачи лучше делать блоками в наиболее ресурсное время дня.</p>
+      </aside>
       <main id="main-content" class="board" role="main">
         <section class="column glass" data-status="backlog">
           <h2 class="column__title">Backlog</h2>
@@ -89,6 +102,53 @@
     </div>
   </div>
 
+  <!-- Режим «Опустошить инбокс»: по одной записи, 4 действия + таймер + счётчик дней -->
+  <div class="inbox-empty-overlay" id="inbox-empty-overlay" role="dialog" aria-modal="true" aria-labelledby="inbox-empty-title" hidden>
+    <div class="inbox-empty__backdrop" id="inbox-empty-backdrop"></div>
+    <div class="inbox-empty__content glass glass--elevated">
+      <div class="inbox-empty__header">
+        <h2 id="inbox-empty-title" class="inbox-empty__title">Опустошить инбокс</h2>
+        <button type="button" class="btn btn--ghost inbox-empty__close" id="inbox-empty-close" aria-label="Закрыть">&times;</button>
+      </div>
+      <p class="inbox-empty__microtip" id="inbox-empty-microtip" aria-live="polite" hidden></p>
+      <div class="inbox-empty__timer" id="inbox-empty-timer" aria-live="polite"></div>
+      <div class="inbox-empty__streak" id="inbox-empty-streak" aria-live="polite"></div>
+      <div class="inbox-empty__card" id="inbox-empty-card">
+        <p class="inbox-empty__text" id="inbox-empty-text"></p>
+        <p class="inbox-empty__counter" id="inbox-empty-counter" aria-live="polite"></p>
+        <div class="inbox-empty__actions">
+          <button type="button" class="btn btn--primary inbox-empty__action" id="inbox-empty-to-task" data-action="task">В задачу</button>
+          <button type="button" class="btn btn--ghost inbox-empty__action" id="inbox-empty-to-note" data-action="note">В заметку</button>
+          <button type="button" class="btn btn--ghost inbox-empty__action" id="inbox-empty-to-calendar" data-action="calendar">В календарь</button>
+          <button type="button" class="btn btn--ghost inbox-empty__action inbox-empty__action--danger" id="inbox-empty-to-trash" data-action="trash">В мусор</button>
+        </div>
+      </div>
+      <div class="inbox-empty__done" id="inbox-empty-done" hidden>
+        <p class="inbox-empty__done-title">Инбокс пуст!</p>
+        <p class="inbox-empty__done-streak" id="inbox-empty-done-streak"></p>
+        <button type="button" class="btn btn--primary" id="inbox-empty-done-close">Закрыть</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Календарь: задачи по срокам из всех сфер -->
+  <div class="calendar-overlay" id="calendar-overlay" role="dialog" aria-modal="true" aria-labelledby="calendar-overlay-title" hidden>
+    <div class="calendar-overlay__backdrop" id="calendar-overlay-backdrop"></div>
+    <div class="calendar-overlay__content glass glass--elevated">
+      <div class="calendar-overlay__header">
+        <button type="button" class="btn btn--ghost calendar-overlay__nav" id="calendar-prev" aria-label="Предыдущий месяц">‹</button>
+        <h2 id="calendar-overlay-title" class="calendar-overlay__title"></h2>
+        <button type="button" class="btn btn--ghost calendar-overlay__nav" id="calendar-next" aria-label="Следующий месяц">›</button>
+        <button type="button" class="btn btn--ghost calendar-overlay__close" id="calendar-close" aria-label="Закрыть">&times;</button>
+      </div>
+      <div class="calendar-grid" id="calendar-grid" role="grid" aria-label="Календарь месяца"></div>
+      <div class="calendar-day-tasks" id="calendar-day-tasks">
+        <h3 class="calendar-day-tasks__title" id="calendar-day-tasks-title">Выберите день</h3>
+        <ul class="calendar-day-tasks__list" id="calendar-day-tasks-list"></ul>
+      </div>
+    </div>
+  </div>
+
   <!-- Виджет настроек (шестерёнка) -->
   <div class="settings-overlay" id="settings-overlay" role="dialog" aria-modal="true" aria-labelledby="settings-overlay-title" hidden>
     <div class="settings-overlay__backdrop" id="settings-overlay-backdrop"></div>
@@ -140,6 +200,14 @@
             </select>
           </div>
           <div class="task-detail__field">
+            <label class="task-detail__label">Мысленная тяжесть</label>
+            <select class="input task-detail__select" id="detail-mental-weight">
+              <option value="light">Лёгкая</option>
+              <option value="medium">Средняя</option>
+              <option value="heavy">Тяжёлая</option>
+            </select>
+          </div>
+          <div class="task-detail__field">
             <label class="task-detail__label">Статус</label>
             <select class="input task-detail__select" id="detail-status">
               <option value="backlog">Backlog</option>
@@ -147,6 +215,16 @@
               <option value="in-progress">In Progress</option>
               <option value="done">Done</option>
             </select>
+          </div>
+          <div class="task-detail__subtasks" id="task-detail-subtasks" hidden>
+            <p class="task-detail__subtasks-summary" id="task-detail-subtasks-summary" aria-live="polite"></p>
+            <h3 class="task-detail__subtasks-title">Первый шажок</h3>
+            <p class="task-detail__subtasks-hint">Микро-действия: один тап — один шажок.</p>
+            <ul class="subtasks-list" id="subtasks-list"></ul>
+            <div class="subtasks-add">
+              <input type="text" class="input subtasks-add__input" id="subtask-input" placeholder="Что сделать первым?" autocomplete="off">
+              <button type="button" class="btn btn--primary subtasks-add__btn" id="btn-add-subtask">Добавить шажок</button>
+            </div>
           </div>
           <div class="task-detail__notes">
             <h3 class="task-detail__notes-title">Заметки к задаче</h3>
@@ -194,6 +272,14 @@
               <option value="medium">Средний</option>
               <option value="high">Высокий</option>
               <option value="critical">Критикал</option>
+            </select>
+          </div>
+          <div class="task-detail__field">
+            <label class="task-detail__label">Мысленная тяжесть</label>
+            <select class="input task-detail__select" id="add-mental-weight">
+              <option value="light">Лёгкая</option>
+              <option value="medium">Средняя</option>
+              <option value="heavy">Тяжёлая</option>
             </select>
           </div>
           <div class="task-detail__field">

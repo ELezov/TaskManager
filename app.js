@@ -11,15 +11,24 @@ const PRIORITIES = [
   { value: 'high', label: 'Высокий' },
   { value: 'critical', label: 'Критикал' },
 ];
+const MENTAL_WEIGHTS = [
+  { value: 'light', label: 'Лёгкая' },
+  { value: 'medium', label: 'Средняя' },
+  { value: 'heavy', label: 'Тяжёлая' },
+];
 
 const DEFAULT_SPHERE_IDS = { work: 'sphere-work', life: 'sphere-life' };
 const VALID_PRIORITIES = PRIORITIES.map((p) => p.value);
+const VALID_MENTAL_WEIGHTS = MENTAL_WEIGHTS.map((w) => w.value);
 const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const POPOVER_PADDING = 16;
 const POPOVER_WIDTH = 260;
 const POPOVER_HEIGHT = 220;
 const POPOVER_OFFSET_H = 12;
 const POPOVER_OFFSET_V = 8;
+const INBOX_TIMER_MINUTES = 15;
+const INBOX_TIP_THRESHOLD = 5;
+const STALE_DAYS = 7;
 
 /** Спусковые крючки «Что мне надо сделать?» — 6 разделов по майнд-карте */
 const TRIGGER_GRAPH = [
@@ -251,7 +260,8 @@ function formatDateOnly(iso) {
 }
 
 /** @typedef {{ id: string, name: string, order: number, notes: { id: string, text: string, createdAt: string }[] }} Sphere */
-/** @typedef {{ id: string, title: string, description: string, status: string, priority: string, sphereId: string, dueDate: string|null, createdAt: string, updatedAt: string, notes: { id: string, text: string, createdAt: string }[] }} Task */
+/** @typedef {{ id: string, text: string, done: boolean }} Subtask */
+/** @typedef {{ id: string, title: string, description: string, status: string, priority: string, mentalWeight: string, sphereId: string, dueDate: string|null, createdAt: string, updatedAt: string, notes: { id: string, text: string, createdAt: string }[], subtasks: Subtask[] }} Task */
 
 /** @type {Sphere[]} */
 let spheres = [];
@@ -259,6 +269,10 @@ let spheres = [];
 let tasks = [];
 /** @type {string|null} */
 let currentSphereId = null;
+/** @type {{ id: string, text: string, createdAt: string }[]} */
+let inbox = [];
+/** @type {string|null} ISO date (YYYY-MM-DD) когда инбокс последний раз опустел */
+let inboxEmptySince = null;
 
 function getDefaultSpheres() {
   return [
@@ -279,16 +293,34 @@ function loadFromStorage() {
       if (!currentSphereId || !spheres.some((s) => s.id === currentSphereId)) {
         currentSphereId = spheres[0]?.id ?? null;
       }
+      inbox = Array.isArray(data.inbox) ? data.inbox.map(normalizeInboxItem) : [];
+      inboxEmptySince = data.inboxEmptySince && DATE_ONLY_REGEX.test(data.inboxEmptySince) ? data.inboxEmptySince : null;
       return;
     }
   } catch (_) {}
   spheres = getDefaultSpheres();
   tasks = [];
   currentSphereId = spheres[0]?.id ?? null;
+  inbox = [];
+  inboxEmptySince = null;
+}
+
+function normalizeInboxItem(i) {
+  return {
+    id: i.id ?? uid(),
+    text: String(i.text ?? '').trim() || 'Без текста',
+    createdAt: i.createdAt ?? nowISO(),
+  };
 }
 
 function saveToStorage() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify({ spheres, tasks, exportedAt: nowISO() }));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    spheres,
+    tasks,
+    inbox,
+    inboxEmptySince,
+    exportedAt: nowISO(),
+  }));
 }
 
 function normalizeSphere(s) {
@@ -314,6 +346,7 @@ function normalizeTask(t, defaultSphereId) {
     description: String(t.description ?? ''),
     status: STATUSES.includes(t.status) ? t.status : 'backlog',
     priority: VALID_PRIORITIES.includes(t.priority) ? t.priority : 'medium',
+    mentalWeight: VALID_MENTAL_WEIGHTS.includes(t.mentalWeight) ? t.mentalWeight : 'medium',
     sphereId,
     dueDate: t.dueDate && DATE_ONLY_REGEX.test(t.dueDate) ? t.dueDate : null,
     createdAt: t.createdAt ?? nowISO(),
@@ -325,6 +358,13 @@ function normalizeTask(t, defaultSphereId) {
           createdAt: n.createdAt ?? nowISO(),
         }))
       : [],
+    subtasks: Array.isArray(t.subtasks)
+      ? t.subtasks.map((s) => ({
+          id: s.id ?? uid(),
+          text: String(s.text ?? '').trim() || 'Шажок',
+          done: Boolean(s.done),
+        }))
+      : [],
   };
 }
 
@@ -332,6 +372,8 @@ function exportJSON() {
   const data = {
     spheres,
     tasks,
+    inbox,
+    inboxEmptySince,
     exportedAt: nowISO(),
     version: 2,
   };
@@ -358,10 +400,14 @@ function importJSON(file) {
         if (!currentSphereId || !spheres.some((s) => s.id === currentSphereId)) {
           currentSphereId = spheres[0]?.id ?? null;
         }
+        inbox = Array.isArray(data.inbox) ? data.inbox.map(normalizeInboxItem) : [];
+        inboxEmptySince = data.inboxEmptySince && DATE_ONLY_REGEX.test(data.inboxEmptySince) ? data.inboxEmptySince : null;
         saveToStorage();
         renderTabs();
         renderSphereNotes();
         renderBoard();
+        updateInboxBadge();
+        updateBoardTip();
         resolve();
       } catch (e) {
         reject(e);
@@ -374,6 +420,292 @@ function importJSON(file) {
 
 function getCurrentSphere() {
   return spheres.find((s) => s.id === currentSphereId) ?? null;
+}
+
+/** Задачи текущей сферы в Todo/In Progress, не обновлявшиеся STALE_DAYS дней (идея Дорофеева: «зависание»). */
+function getStaleTasksCount() {
+  if (!currentSphereId) return 0;
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - STALE_DAYS);
+  const cutoffISO = cutoff.toISOString();
+  return tasks.filter(
+    (t) =>
+      t.sphereId === currentSphereId &&
+      (t.status === 'todo' || t.status === 'in-progress') &&
+      t.updatedAt < cutoffISO
+  ).length;
+}
+
+/** Подсказки-микросаммари в контексте: переполненный инбокс, зависшие задачи, тяжёлые без шажков. */
+function updateBoardTip() {
+  const el = document.getElementById('board-tip-text');
+  if (!el) return;
+  if (inbox.length >= INBOX_TIP_THRESHOLD) {
+    el.textContent = 'Переполненный инбокс — разбирайте блоками по 10–15 мин, по одной записи (идея Дорофеева).';
+    return;
+  }
+  const staleCount = getStaleTasksCount();
+  if (staleCount > 0) {
+    el.textContent = 'Задачи давно в списке? Разбейте на шажки или пересмотрите приоритет — иначе они «зависают».';
+    return;
+  }
+  el.textContent = 'Тяжёлые по мысленной нагрузке задачи лучше делать блоками в наиболее ресурсное время дня.';
+}
+
+// ——— Инбокс ———
+
+function addToInbox(text) {
+  const trimmed = String(text).trim();
+  if (!trimmed) return;
+  inbox.push({ id: uid(), text: trimmed, createdAt: nowISO() });
+  inboxEmptySince = null;
+  saveToStorage();
+  updateInboxBadge();
+}
+
+function removeFromInbox(id) {
+  inbox = inbox.filter((item) => item.id !== id);
+  if (inbox.length === 0) {
+    inboxEmptySince = new Date().toISOString().slice(0, 10);
+    saveToStorage();
+  } else {
+    saveToStorage();
+  }
+  updateInboxBadge();
+}
+
+function getInboxStreak() {
+  if (inbox.length > 0) return 0;
+  if (!inboxEmptySince) return 0;
+  const from = new Date(inboxEmptySince);
+  const to = new Date();
+  from.setHours(0, 0, 0, 0);
+  to.setHours(0, 0, 0, 0);
+  const diff = Math.floor((to - from) / (24 * 60 * 60 * 1000));
+  return Math.max(0, diff);
+}
+
+function updateInboxBadge() {
+  const badge = document.getElementById('inbox-badge');
+  const btnEmpty = document.getElementById('btn-empty-inbox');
+  if (!badge || !btnEmpty) return;
+  if (inbox.length === 0) {
+    badge.hidden = true;
+    btnEmpty.disabled = true;
+  } else {
+    badge.hidden = false;
+    badge.textContent = String(inbox.length);
+    btnEmpty.disabled = false;
+  }
+  updateBoardTip();
+}
+
+function openInboxQuickPopover() {
+  const popover = document.getElementById('inbox-quick-popover');
+  const input = document.getElementById('inbox-quick-input');
+  if (!popover || !input) return;
+  popover.hidden = false;
+  input.value = '';
+  input.focus();
+}
+
+function closeInboxQuickPopover() {
+  const popover = document.getElementById('inbox-quick-popover');
+  if (popover) popover.hidden = true;
+}
+
+function submitInboxQuick() {
+  const input = document.getElementById('inbox-quick-input');
+  if (!input) return;
+  addToInbox(input.value);
+  input.value = '';
+  closeInboxQuickPopover();
+}
+
+// Режим «Опустошить инбокс»: таймер в минутах, текущий индекс
+let inboxEmptyTimerId = null;
+let inboxEmptyTimerEnd = 0;
+let inboxEmptyIndex = 0;
+
+function getTodayDateOnly() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function startInboxEmptyTimer() {
+  stopInboxEmptyTimer();
+  const el = document.getElementById('inbox-empty-timer');
+  if (!el) return;
+  inboxEmptyTimerEnd = Date.now() + INBOX_TIMER_MINUTES * 60 * 1000;
+  function tick() {
+    const left = Math.max(0, Math.ceil((inboxEmptyTimerEnd - Date.now()) / 1000));
+    if (left <= 0) {
+      el.textContent = 'Время вышло. Можно закрыть и продолжить позже.';
+      stopInboxEmptyTimer();
+      return;
+    }
+    const m = Math.floor(left / 60);
+    const s = left % 60;
+    el.textContent = `Осталось ${m}:${String(s).padStart(2, '0')}`;
+    inboxEmptyTimerId = setTimeout(tick, 1000);
+  }
+  tick();
+}
+
+function stopInboxEmptyTimer() {
+  if (inboxEmptyTimerId) {
+    clearTimeout(inboxEmptyTimerId);
+    inboxEmptyTimerId = null;
+  }
+}
+
+function openEmptyInboxOverlay() {
+  if (inbox.length === 0) return;
+  const overlay = document.getElementById('inbox-empty-overlay');
+  const card = document.getElementById('inbox-empty-card');
+  const done = document.getElementById('inbox-empty-done');
+  const microtip = document.getElementById('inbox-empty-microtip');
+  if (!overlay || !card || !done) return;
+  overlay.hidden = false;
+  card.hidden = false;
+  done.hidden = true;
+  if (microtip) {
+    if (inbox.length >= INBOX_TIP_THRESHOLD) {
+      microtip.textContent = 'Разбирайте по одной записи, не откладывая — так инбокс не переполняется (Дорофеев).';
+      microtip.hidden = false;
+    } else {
+      microtip.hidden = true;
+    }
+  }
+  inboxEmptyIndex = 0;
+  startInboxEmptyTimer();
+  updateInboxEmptyStreakLabel();
+  showCurrentInboxItem();
+}
+
+function closeEmptyInboxOverlay() {
+  const overlay = document.getElementById('inbox-empty-overlay');
+  if (overlay) overlay.hidden = true;
+  stopInboxEmptyTimer();
+}
+
+function updateInboxEmptyStreakLabel() {
+  const streakEl = document.getElementById('inbox-empty-streak');
+  if (!streakEl) return;
+  const streak = getInboxStreak();
+  if (inbox.length === 0 && streak > 0) {
+    streakEl.textContent = `Инбокс пуст ${streak} ${pluralDays(streak)} подряд`;
+    streakEl.hidden = false;
+  } else {
+    streakEl.hidden = true;
+  }
+}
+
+function pluralDays(n) {
+  if (n === 1) return 'день';
+  if (n >= 2 && n <= 4) return 'дня';
+  return 'дней';
+}
+
+function showCurrentInboxItem() {
+  const textEl = document.getElementById('inbox-empty-text');
+  const counterEl = document.getElementById('inbox-empty-counter');
+  const card = document.getElementById('inbox-empty-card');
+  const done = document.getElementById('inbox-empty-done');
+  const doneStreak = document.getElementById('inbox-empty-done-streak');
+  if (!textEl || !counterEl || !card || !done) return;
+  if (inbox.length === 0) {
+    card.hidden = true;
+    done.hidden = false;
+    const streak = getInboxStreak();
+    if (doneStreak) {
+      doneStreak.textContent = streak > 0 ? `Инбокс пуст ${streak} ${pluralDays(streak)} подряд` : 'Отличная работа!';
+    }
+    stopInboxEmptyTimer();
+    document.getElementById('inbox-empty-timer').textContent = '';
+    return;
+  }
+  const item = inbox[0];
+  textEl.textContent = item.text;
+  counterEl.textContent = `Осталось записей: ${inbox.length}`;
+}
+
+function processInboxToTask(item) {
+  const sphereId = currentSphereId ?? spheres[0]?.id;
+  if (!sphereId) return;
+  const task = {
+    id: uid(),
+    title: item.text,
+    description: '',
+    status: 'backlog',
+    priority: 'medium',
+    mentalWeight: 'medium',
+    sphereId,
+    dueDate: null,
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+    notes: [],
+    subtasks: [],
+  };
+  tasks.push(task);
+  removeFromInbox(item.id);
+  saveToStorage();
+  renderBoard();
+}
+
+function processInboxToNote(item) {
+  const sphere = getCurrentSphere();
+  if (!sphere) return;
+  sphere.notes = sphere.notes ?? [];
+  sphere.notes.push({ id: uid(), text: item.text, createdAt: nowISO() });
+  removeFromInbox(item.id);
+  saveToStorage();
+  renderSphereNotes();
+}
+
+function processInboxToCalendar(item) {
+  const sphereId = currentSphereId ?? spheres[0]?.id;
+  if (!sphereId) return;
+  const task = {
+    id: uid(),
+    title: item.text,
+    description: '',
+    status: 'backlog',
+    priority: 'medium',
+    mentalWeight: 'medium',
+    sphereId,
+    dueDate: null,
+    createdAt: nowISO(),
+    updatedAt: nowISO(),
+    notes: [],
+    subtasks: [],
+  };
+  tasks.push(task);
+  removeFromInbox(item.id);
+  saveToStorage();
+  renderBoard();
+  openTaskModal(task.id);
+  showCurrentInboxItem();
+}
+
+function processInboxToTrash(item) {
+  removeFromInbox(item.id);
+}
+
+function onInboxEmptyAction(action) {
+  if (inbox.length === 0) return;
+  const item = inbox[0];
+  if (action === 'task') {
+    processInboxToTask(item);
+    showCurrentInboxItem();
+  } else if (action === 'note') {
+    processInboxToNote(item);
+    showCurrentInboxItem();
+  } else if (action === 'calendar') {
+    processInboxToCalendar(item);
+  } else if (action === 'trash') {
+    processInboxToTrash(item);
+    showCurrentInboxItem();
+  }
 }
 
 function renderTabs() {
@@ -406,6 +738,7 @@ function switchSphere(sphereId) {
   document.body.dataset.sphere = sphereId === DEFAULT_SPHERE_IDS.life ? 'life' : 'work';
   renderSphereNotes();
   renderBoard();
+  updateBoardTip();
 }
 
 /** Создаёт DOM-элемент одной заметки (DRY для сферы и задачи). */
@@ -510,6 +843,7 @@ function renderBoard() {
     const byStatus = list.filter((t) => t.status === status);
     byStatus.forEach((task) => container.appendChild(createCard(task)));
   }
+  updateBoardTip();
 }
 
 function setupColumnDrop(container, status) {
@@ -549,10 +883,23 @@ function createCard(task) {
 
   const meta = document.createElement('div');
   meta.className = 'card__meta';
+  const priorityLabel = document.createElement('span');
+  priorityLabel.className = 'card__meta-label';
+  priorityLabel.textContent = 'Приор.:';
+  meta.appendChild(priorityLabel);
   const prioritySpan = document.createElement('span');
   prioritySpan.className = `priority priority--${task.priority}`;
   prioritySpan.textContent = PRIORITIES.find((p) => p.value === task.priority)?.label ?? task.priority;
   meta.appendChild(prioritySpan);
+  const weightLabel = document.createElement('span');
+  weightLabel.className = 'card__meta-label';
+  weightLabel.textContent = 'Сложн.:';
+  meta.appendChild(weightLabel);
+  const weight = task.mentalWeight ?? 'medium';
+  const weightSpan = document.createElement('span');
+  weightSpan.className = `mental-weight mental-weight--${weight}`;
+  weightSpan.textContent = MENTAL_WEIGHTS.find((w) => w.value === weight)?.label ?? weight;
+  meta.appendChild(weightSpan);
   if (task.dueDate) {
     const due = document.createElement('span');
     due.className = 'card__due';
@@ -564,6 +911,14 @@ function createCard(task) {
     notesCount.className = 'card__notes-count';
     notesCount.textContent = `Заметок: ${task.notes.length}`;
     meta.appendChild(notesCount);
+  }
+  const subtasks = task.subtasks ?? [];
+  if (subtasks.length > 0) {
+    const doneCount = subtasks.filter((s) => s.done).length;
+    const stepSpan = document.createElement('span');
+    stepSpan.className = 'card__steps-count';
+    stepSpan.textContent = `Шажков: ${doneCount}/${subtasks.length}`;
+    meta.appendChild(stepSpan);
   }
 
   wrap.appendChild(title);
@@ -607,7 +962,28 @@ function openTaskModal(taskId) {
   document.getElementById('detail-description').value = task.description;
   document.getElementById('detail-due-date').value = task.dueDate || '';
   document.getElementById('detail-priority').value = task.priority;
+  document.getElementById('detail-mental-weight').value = task.mentalWeight ?? 'medium';
   document.getElementById('detail-status').value = task.status;
+
+  const subtasksBlock = document.getElementById('task-detail-subtasks');
+  const summaryEl = document.getElementById('task-detail-subtasks-summary');
+  const weight = task.mentalWeight ?? 'medium';
+  const subtasks = task.subtasks ?? [];
+  const isBigWithoutSteps = (weight === 'medium' || weight === 'heavy') && subtasks.length === 0;
+  if (subtasksBlock) {
+    subtasksBlock.hidden = weight !== 'medium' && weight !== 'heavy';
+  }
+  if (summaryEl) {
+    if (isBigWithoutSteps) {
+      summaryEl.textContent = 'Слишком крупно? Один маленький первый шаг снижает сопротивление и запускает движение (Дорофеев).';
+      summaryEl.hidden = false;
+    } else {
+      summaryEl.textContent = '';
+      summaryEl.hidden = true;
+    }
+  }
+  renderSubtasks(subtasks);
+  document.getElementById('subtask-input').value = '';
 
   renderNotesList(task.notes);
   document.getElementById('note-text').value = '';
@@ -615,6 +991,77 @@ function openTaskModal(taskId) {
   const modal = document.getElementById('modal-task');
   modal.hidden = false;
   document.getElementById('detail-title').focus();
+}
+
+function renderSubtasks(subtasks) {
+  const list = document.getElementById('subtasks-list');
+  if (!list) return;
+  list.innerHTML = '';
+  subtasks.forEach((st) => {
+    const li = document.createElement('li');
+    li.className = 'subtasks-list__item';
+    const label = document.createElement('label');
+    label.className = 'subtasks-list__label';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.checked = st.done;
+    input.className = 'subtasks-list__checkbox';
+    input.addEventListener('change', () => toggleSubtaskDone(st.id));
+    const text = document.createElement('span');
+    text.className = 'subtasks-list__text';
+    text.textContent = st.text;
+    if (st.done) text.classList.add('subtasks-list__text--done');
+    label.appendChild(input);
+    label.appendChild(text);
+    li.appendChild(label);
+    const delBtn = document.createElement('button');
+    delBtn.type = 'button';
+    delBtn.className = 'btn btn--ghost subtasks-list__delete';
+    delBtn.setAttribute('aria-label', 'Удалить шажок');
+    delBtn.textContent = '×';
+    delBtn.addEventListener('click', () => removeSubtask(st.id));
+    li.appendChild(delBtn);
+    list.appendChild(li);
+  });
+}
+
+function addSubtaskFromModal() {
+  if (!currentTaskId) return;
+  const task = tasks.find((t) => t.id === currentTaskId);
+  if (!task) return;
+  const input = document.getElementById('subtask-input');
+  const text = input?.value?.trim();
+  if (!text) return;
+  task.subtasks = task.subtasks ?? [];
+  task.subtasks.push({ id: uid(), text, done: false });
+  task.updatedAt = nowISO();
+  input.value = '';
+  saveToStorage();
+  renderSubtasks(task.subtasks);
+  renderBoard();
+}
+
+function removeSubtask(subtaskId) {
+  if (!currentTaskId) return;
+  const task = tasks.find((t) => t.id === currentTaskId);
+  if (!task?.subtasks) return;
+  task.subtasks = task.subtasks.filter((s) => s.id !== subtaskId);
+  task.updatedAt = nowISO();
+  saveToStorage();
+  renderSubtasks(task.subtasks);
+  renderBoard();
+}
+
+function toggleSubtaskDone(subtaskId) {
+  if (!currentTaskId) return;
+  const task = tasks.find((t) => t.id === currentTaskId);
+  const st = task?.subtasks?.find((s) => s.id === subtaskId);
+  if (!st) return;
+  st.done = !st.done;
+  task.updatedAt = nowISO();
+  saveToStorage();
+  renderSubtasks(task.subtasks);
+  renderBoard();
 }
 
 function renderNotesList(notes) {
@@ -645,6 +1092,8 @@ function deleteTaskNote(noteId) {
 function closeTaskModal() {
   document.getElementById('modal-task').hidden = true;
   currentTaskId = null;
+  const emptyOverlay = document.getElementById('inbox-empty-overlay');
+  if (emptyOverlay && !emptyOverlay.hidden) showCurrentInboxItem();
 }
 
 function saveTaskFromModal() {
@@ -657,6 +1106,7 @@ function saveTaskFromModal() {
   const dueVal = document.getElementById('detail-due-date').value;
   task.dueDate = dueVal && DATE_ONLY_REGEX.test(dueVal) ? dueVal : null;
   task.priority = document.getElementById('detail-priority').value;
+  task.mentalWeight = document.getElementById('detail-mental-weight').value;
   task.status = document.getElementById('detail-status').value;
   task.updatedAt = nowISO();
 
@@ -697,6 +1147,7 @@ function openAddModal(initialStatus) {
   document.getElementById('add-description').value = '';
   document.getElementById('add-due-date').value = '';
   document.getElementById('add-priority').value = 'medium';
+  document.getElementById('add-mental-weight').value = 'medium';
   document.getElementById('add-status').value = initialStatus;
   document.getElementById('modal-add').hidden = false;
   document.getElementById('add-title').focus();
@@ -712,6 +1163,7 @@ function createTaskFromModal() {
   const dueVal = document.getElementById('add-due-date').value;
   const dueDate = dueVal && DATE_ONLY_REGEX.test(dueVal) ? dueVal : null;
   const priority = document.getElementById('add-priority').value;
+  const mentalWeight = document.getElementById('add-mental-weight').value;
   const status = document.getElementById('add-status').value;
   const sphereId = currentSphereId ?? spheres[0]?.id;
 
@@ -721,11 +1173,13 @@ function createTaskFromModal() {
     description,
     status,
     priority,
+    mentalWeight: VALID_MENTAL_WEIGHTS.includes(mentalWeight) ? mentalWeight : 'medium',
     sphereId,
     dueDate,
     createdAt: nowISO(),
     updatedAt: nowISO(),
     notes: [],
+    subtasks: [],
   };
   tasks.push(task);
   saveToStorage();
@@ -905,15 +1359,125 @@ function addTaskFromTrigger(title, sphereId) {
     description: '',
     status: 'backlog',
     priority: 'medium',
+    mentalWeight: 'medium',
     sphereId,
     dueDate: null,
     createdAt: nowISO(),
     updatedAt: nowISO(),
     notes: [],
+    subtasks: [],
   };
   tasks.push(task);
   saveToStorage();
   renderBoard();
+}
+
+// ——— Календарь ———
+let calendarMonth = new Date().getMonth();
+let calendarYear = new Date().getFullYear();
+let calendarSelectedDate = null;
+
+function getTasksByDate(dateStr) {
+  return tasks.filter((t) => t.dueDate === dateStr);
+}
+
+function getMonthName(month, year) {
+  return new Date(year, month, 1).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+}
+
+function renderCalendar() {
+  const grid = document.getElementById('calendar-grid');
+  const titleEl = document.getElementById('calendar-overlay-title');
+  if (!grid || !titleEl) return;
+  titleEl.textContent = getMonthName(calendarMonth, calendarYear);
+  const first = new Date(calendarYear, calendarMonth, 1);
+  const last = new Date(calendarYear, calendarMonth + 1, 0);
+  const startDay = (first.getDay() + 6) % 7;
+  const daysInMonth = last.getDate();
+  const weekDays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+  grid.innerHTML = '';
+  weekDays.forEach((d) => {
+    const th = document.createElement('div');
+    th.className = 'calendar-grid__weekday';
+    th.textContent = d;
+    grid.appendChild(th);
+  });
+  for (let i = 0; i < startDay; i++) {
+    const empty = document.createElement('div');
+    empty.className = 'calendar-grid__day calendar-grid__day--empty';
+    grid.appendChild(empty);
+  }
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateStr = `${calendarYear}-${String(calendarMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const count = getTasksByDate(dateStr).length;
+    const cell = document.createElement('button');
+    cell.type = 'button';
+    cell.className = 'calendar-grid__day';
+    cell.textContent = day;
+    cell.dataset.date = dateStr;
+    if (count > 0) cell.classList.add('calendar-grid__day--has-tasks');
+    if (calendarSelectedDate === dateStr) cell.classList.add('calendar-grid__day--selected');
+    cell.addEventListener('click', () => selectCalendarDay(dateStr));
+    grid.appendChild(cell);
+  }
+}
+
+function selectCalendarDay(dateStr) {
+  calendarSelectedDate = dateStr;
+  renderCalendar();
+  renderCalendarDayTasks(dateStr);
+}
+
+function renderCalendarDayTasks(dateStr) {
+  const titleEl = document.getElementById('calendar-day-tasks-title');
+  const listEl = document.getElementById('calendar-day-tasks-list');
+  if (!titleEl || !listEl) return;
+  const d = dateStr ? new Date(dateStr + 'T12:00:00') : null;
+  const dateLabel = d ? d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' }) : '';
+  titleEl.textContent = dateStr ? `Задачи на ${dateLabel}` : 'Выберите день';
+  listEl.innerHTML = '';
+  if (!dateStr) return;
+  const dayTasks = getTasksByDate(dateStr);
+  dayTasks.forEach((task) => {
+    const sphere = spheres.find((s) => s.id === task.sphereId);
+    const li = document.createElement('li');
+    li.className = 'calendar-day-tasks__item';
+    const link = document.createElement('button');
+    link.type = 'button';
+    link.className = 'btn btn--ghost calendar-day-tasks__link';
+    link.textContent = task.title;
+    link.addEventListener('click', () => {
+      closeCalendarOverlay();
+      openTaskModal(task.id);
+    });
+    const sphereSpan = document.createElement('span');
+    sphereSpan.className = 'calendar-day-tasks__sphere';
+    sphereSpan.textContent = sphere?.name ?? task.sphereId;
+    li.appendChild(link);
+    li.appendChild(sphereSpan);
+    listEl.appendChild(li);
+  });
+  if (dayTasks.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'calendar-day-tasks__empty';
+    empty.textContent = 'Нет задач на эту дату';
+    listEl.appendChild(empty);
+  }
+}
+
+function openCalendarOverlay() {
+  calendarMonth = new Date().getMonth();
+  calendarYear = new Date().getFullYear();
+  calendarSelectedDate = null;
+  const overlay = document.getElementById('calendar-overlay');
+  if (overlay) overlay.hidden = false;
+  renderCalendar();
+  renderCalendarDayTasks(null);
+}
+
+function closeCalendarOverlay() {
+  const overlay = document.getElementById('calendar-overlay');
+  if (overlay) overlay.hidden = true;
 }
 
 function setupModals() {
@@ -947,6 +1511,15 @@ function setupModals() {
   document.getElementById('btn-save-task').addEventListener('click', saveTaskFromModal);
   document.getElementById('btn-delete-task').addEventListener('click', deleteTaskFromModal);
   document.getElementById('btn-add-note').addEventListener('click', addNoteFromModal);
+  document.getElementById('btn-add-subtask').addEventListener('click', addSubtaskFromModal);
+  document.getElementById('subtask-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); addSubtaskFromModal(); }
+  });
+  document.getElementById('detail-mental-weight').addEventListener('change', () => {
+    const weight = document.getElementById('detail-mental-weight').value;
+    const block = document.getElementById('task-detail-subtasks');
+    if (block) block.hidden = weight !== 'medium' && weight !== 'heavy';
+  });
   document.getElementById('btn-create-task').addEventListener('click', createTaskFromModal);
 
   document.getElementById('btn-add-sphere-note').addEventListener('click', addSphereNote);
@@ -957,9 +1530,49 @@ function setupModals() {
     btn.addEventListener('click', () => openAddModal(btn.dataset.status));
   });
 
+  document.getElementById('btn-open-calendar').addEventListener('click', openCalendarOverlay);
+  document.getElementById('calendar-close').addEventListener('click', closeCalendarOverlay);
+  document.getElementById('calendar-overlay-backdrop').addEventListener('click', closeCalendarOverlay);
+  document.getElementById('calendar-prev').addEventListener('click', () => {
+    calendarMonth -= 1;
+    if (calendarMonth < 0) { calendarMonth = 11; calendarYear -= 1; }
+    renderCalendar();
+  });
+  document.getElementById('calendar-next').addEventListener('click', () => {
+    calendarMonth += 1;
+    if (calendarMonth > 11) { calendarMonth = 0; calendarYear += 1; }
+    renderCalendar();
+  });
+
   document.getElementById('btn-open-settings').addEventListener('click', openSettingsOverlay);
   document.getElementById('settings-overlay-close').addEventListener('click', closeSettingsOverlay);
   document.getElementById('settings-overlay-backdrop').addEventListener('click', closeSettingsOverlay);
+
+  document.getElementById('btn-inbox-quick').addEventListener('click', () => {
+    const popover = document.getElementById('inbox-quick-popover');
+    if (popover && !popover.hidden) closeInboxQuickPopover();
+    else openInboxQuickPopover();
+  });
+  document.getElementById('inbox-quick-submit').addEventListener('click', submitInboxQuick);
+  document.getElementById('inbox-quick-input')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); submitInboxQuick(); }
+  });
+  document.addEventListener('click', (e) => {
+    const popover = document.getElementById('inbox-quick-popover');
+    const btn = document.getElementById('btn-inbox-quick');
+    if (popover && !popover.hidden && !popover.contains(e.target) && btn && !btn.contains(e.target)) {
+      closeInboxQuickPopover();
+    }
+  });
+  document.getElementById('btn-empty-inbox').addEventListener('click', openEmptyInboxOverlay);
+
+  document.getElementById('inbox-empty-close').addEventListener('click', closeEmptyInboxOverlay);
+  document.getElementById('inbox-empty-backdrop').addEventListener('click', closeEmptyInboxOverlay);
+  document.getElementById('inbox-empty-to-task').addEventListener('click', () => onInboxEmptyAction('task'));
+  document.getElementById('inbox-empty-to-note').addEventListener('click', () => onInboxEmptyAction('note'));
+  document.getElementById('inbox-empty-to-calendar').addEventListener('click', () => onInboxEmptyAction('calendar'));
+  document.getElementById('inbox-empty-to-trash').addEventListener('click', () => onInboxEmptyAction('trash'));
+  document.getElementById('inbox-empty-done-close').addEventListener('click', closeEmptyInboxOverlay);
 
   document.getElementById('btn-export').addEventListener('click', exportJSON);
   document.getElementById('input-import').addEventListener('change', (e) => {
@@ -985,6 +1598,8 @@ function init() {
   renderTabs();
   renderSphereNotes();
   renderBoard();
+  updateInboxBadge();
+  updateBoardTip();
   setupModals();
   STATUSES.forEach((status) => {
     const container = document.querySelector(`[data-column="${status}"]`);

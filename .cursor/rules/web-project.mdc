@@ -1,0 +1,25 @@
+---
+description: Web project standards — SOLID, KISS, DRY, semantic HTML, a11y, deploy
+globs: "**/*.html,**/*.css,**/*.js"
+alwaysApply: false
+---
+
+# Web Project Rules
+
+## Stack (this project)
+- Vanilla HTML5, CSS (BEM-like), ES6+ JS. Data: localStorage + JSON export/import. No React/Vue, no backend.
+
+## Code
+- **SOLID/KISS/DRY/YAGNI**: One responsibility per function, no duplication, no "for future" code.
+- **Clean Code**: Descriptive names, functions &lt;20 lines, named constants instead of magic numbers.
+- **JS**: ES6+, no jQuery. Minimal global state; small pure helpers (uid, formatDate, etc.).
+
+## Frontend
+- **HTML**: Semantic tags (`header`, `main`, `section`, `nav`), `lang`, ARIA where needed (`role`, `aria-label`, `aria-modal`).
+- **CSS**: BEM-style classes, design tokens in `:root`. No inline styles. Mobile-first; test from 320px.
+- **A11y**: Skip link, keyboard nav, `alt` for images, focus visible.
+
+## Output
+- Generate full file (imports + export) when adding files.
+- Describe how the change looks in the browser when UI is touched.
+- Deploy-ready: keep `netlify.toml` or `vercel.json` valid.

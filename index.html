@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Task Manager — Liquid Glass</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a href="#main-content" class="skip-link">Перейти к контенту</a>
+  <div class="app">
+    <header class="header">
+      <h1 class="header__title">Task Manager</h1>
+      <div class="header__actions">
+        <button type="button" class="btn btn--primary" id="btn-open-triggers" aria-label="Спусковые крючки">Спусковые крючки</button>
+        <button type="button" class="btn btn--ghost header__settings" id="btn-open-settings" aria-label="Настройки">⚙</button>
+      </div>
+    </header>
+
+    <div class="tabs glass" role="tablist" aria-label="Сферы">
+      <div class="tabs__list" id="tabs-list"></div>
+      <button type="button" class="btn btn--ghost tabs__add" id="btn-add-sphere" aria-label="Добавить сферу">+ Сфера</button>
+    </div>
+
+    <div class="sphere-content">
+      <section class="sphere-notes glass" aria-label="Заметки сферы">
+        <h2 class="sphere-notes__title">Заметки сферы</h2>
+        <div class="notes-list" id="sphere-notes-list"></div>
+        <div class="note-form">
+          <textarea class="textarea note-form__input" id="sphere-note-text" placeholder="Добавить заметку к сфере..." rows="2"></textarea>
+          <button type="button" class="btn btn--primary note-form__btn" id="btn-add-sphere-note">Добавить заметку</button>
+        </div>
+      </section>
+
+      <main id="main-content" class="board" role="main">
+        <section class="column glass" data-status="backlog">
+          <h2 class="column__title">Backlog</h2>
+          <div class="column__cards" data-column="backlog"></div>
+          <button type="button" class="btn btn--ghost column__add" data-status="backlog">+ Добавить задачу</button>
+        </section>
+        <section class="column glass" data-status="todo">
+          <h2 class="column__title">Todo</h2>
+          <div class="column__cards" data-column="todo"></div>
+          <button type="button" class="btn btn--ghost column__add" data-status="todo">+ Добавить задачу</button>
+        </section>
+        <section class="column glass" data-status="in-progress">
+          <h2 class="column__title">In Progress</h2>
+          <div class="column__cards" data-column="in-progress"></div>
+          <button type="button" class="btn btn--ghost column__add" data-status="in-progress">+ Добавить задачу</button>
+        </section>
+        <section class="column glass" data-status="done">
+          <h2 class="column__title">Done</h2>
+          <div class="column__cards" data-column="done"></div>
+          <button type="button" class="btn btn--ghost column__add" data-status="done">+ Добавить задачу</button>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- Оверлей «Спусковые крючки» — граф поверх рабочей области -->
+  <div class="triggers-overlay" id="triggers-overlay" role="dialog" aria-modal="true" aria-labelledby="triggers-overlay-title" hidden>
+    <div class="triggers-overlay__backdrop" id="triggers-overlay-backdrop"></div>
+    <div class="triggers-overlay__content glass glass--elevated">
+      <div class="triggers-overlay__header">
+        <button type="button" class="btn btn--ghost triggers-overlay__back" id="triggers-overlay-back" aria-label="К выбору раздела" hidden>← Раздел</button>
+        <h2 id="triggers-overlay-title" class="triggers-overlay__title">Спусковые крючки для очистки мозга</h2>
+        <p class="triggers-overlay__subtitle" id="triggers-overlay-subtitle">Выберите раздел — откроется список триггеров. Клик по пункту: добавить задачу в сферу.</p>
+        <button type="button" class="btn btn--ghost triggers-overlay__close" id="triggers-overlay-close" aria-label="Закрыть">&times;</button>
+      </div>
+      <div class="triggers-overlay__choose" id="triggers-choose">
+        <button type="button" class="triggers-choose__card glass" data-section-id="zdorovie">Здоровье</button>
+        <button type="button" class="triggers-choose__card glass" data-section-id="semya">Семья</button>
+        <button type="button" class="triggers-choose__card glass" data-section-id="dom-dacha">Дом / дача</button>
+        <button type="button" class="triggers-choose__card glass" data-section-id="lichnaya-zhizn">Личная жизнь</button>
+        <button type="button" class="triggers-choose__card glass" data-section-id="ucheba">Учёба</button>
+        <button type="button" class="triggers-choose__card glass" data-section-id="rabota">Работа</button>
+      </div>
+      <div class="triggers-overlay__content-wrap" id="triggers-content-wrap" hidden>
+        <div class="triggers-list" id="triggers-list"></div>
+      </div>
+      <div class="triggers-overlay__popover" id="triggers-popover" hidden role="dialog" aria-label="Добавить задачу в сферу">
+        <div class="triggers-popover__inner" id="triggers-popover-inner">
+          <p class="triggers-popover__label" id="triggers-popover-label">Категория</p>
+          <input type="text" class="input triggers-popover__input" id="triggers-popover-input" placeholder="Что пришло в голову?">
+          <select class="input triggers-popover__select" id="triggers-popover-sphere"></select>
+          <button type="button" class="btn btn--primary triggers-popover__btn" id="triggers-popover-btn">В сферу</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Виджет настроек (шестерёнка) -->
+  <div class="settings-overlay" id="settings-overlay" role="dialog" aria-modal="true" aria-labelledby="settings-overlay-title" hidden>
+    <div class="settings-overlay__backdrop" id="settings-overlay-backdrop"></div>
+    <div class="settings-overlay__content glass glass--elevated">
+      <div class="settings-overlay__header">
+        <h2 id="settings-overlay-title" class="settings-overlay__title">Настройки</h2>
+        <button type="button" class="btn btn--ghost settings-overlay__close" id="settings-overlay-close" aria-label="Закрыть">&times;</button>
+      </div>
+      <div class="settings-overlay__body">
+        <p class="settings-overlay__section-label">Задачи и сферы (JSON)</p>
+        <div class="settings-overlay__actions">
+          <button type="button" class="btn btn--primary" id="btn-export" aria-label="Выгрузить задачи в JSON">Выгрузить JSON</button>
+          <label class="btn btn--ghost" for="input-import">Загрузить JSON</label>
+          <input type="file" id="input-import" accept=".json" class="sr-only" aria-label="Выберите JSON файл">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Task detail -->
+  <div class="modal" id="modal-task" role="dialog" aria-modal="true" aria-labelledby="modal-task-title" hidden>
+    <div class="modal__backdrop" data-close="modal-task"></div>
+    <div class="modal__content glass glass--elevated">
+      <div class="modal__header">
+        <h2 id="modal-task-title" class="modal__title">Задача</h2>
+        <button type="button" class="btn btn--ghost modal__close" data-close="modal-task" aria-label="Закрыть">&times;</button>
+      </div>
+      <div class="modal__body">
+        <div class="task-detail">
+          <div class="task-detail__field">
+            <label class="task-detail__label">Название</label>
+            <input type="text" class="input task-detail__input" id="detail-title" placeholder="Название задачи">
+          </div>
+          <div class="task-detail__field">
+            <label class="task-detail__label">Описание</label>
+            <textarea class="textarea task-detail__textarea" id="detail-description" placeholder="Описание (необязательно)" rows="3"></textarea>
+          </div>
+          <div class="task-detail__field">
+            <label class="task-detail__label">Срок исполнения</label>
+            <input type="date" class="input" id="detail-due-date" placeholder="Не задан">
+          </div>
+          <div class="task-detail__field">
+            <label class="task-detail__label">Приоритет</label>
+            <select class="input task-detail__select" id="detail-priority">
+              <option value="low">Низкий</option>
+              <option value="medium">Средний</option>
+              <option value="high">Высокий</option>
+              <option value="critical">Критикал</option>
+            </select>
+          </div>
+          <div class="task-detail__field">
+            <label class="task-detail__label">Статус</label>
+            <select class="input task-detail__select" id="detail-status">
+              <option value="backlog">Backlog</option>
+              <option value="todo">Todo</option>
+              <option value="in-progress">In Progress</option>
+              <option value="done">Done</option>
+            </select>
+          </div>
+          <div class="task-detail__notes">
+            <h3 class="task-detail__notes-title">Заметки к задаче</h3>
+            <div class="notes-list" id="notes-list"></div>
+            <div class="note-form">
+              <textarea class="textarea note-form__input" id="note-text" placeholder="Добавить заметку..." rows="2"></textarea>
+              <button type="button" class="btn btn--primary note-form__btn" id="btn-add-note">Добавить заметку</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="modal__footer">
+        <button type="button" class="btn btn--ghost" id="btn-delete-task">Удалить задачу</button>
+        <button type="button" class="btn btn--primary" id="btn-save-task">Сохранить</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add task -->
+  <div class="modal" id="modal-add" role="dialog" aria-modal="true" aria-labelledby="modal-add-title" hidden>
+    <div class="modal__backdrop" data-close="modal-add"></div>
+    <div class="modal__content glass glass--elevated">
+      <div class="modal__header">
+        <h2 id="modal-add-title" class="modal__title">Новая задача</h2>
+        <button type="button" class="btn btn--ghost modal__close" data-close="modal-add" aria-label="Закрыть">&times;</button>
+      </div>
+      <div class="modal__body">
+        <div class="task-detail">
+          <div class="task-detail__field">
+            <label class="task-detail__label">Название</label>
+            <input type="text" class="input task-detail__input" id="add-title" placeholder="Название задачи">
+          </div>
+          <div class="task-detail__field">
+            <label class="task-detail__label">Описание</label>
+            <textarea class="textarea task-detail__textarea" id="add-description" placeholder="Описание (необязательно)" rows="3"></textarea>
+          </div>
+          <div class="task-detail__field">
+            <label class="task-detail__label">Срок исполнения</label>
+            <input type="date" class="input" id="add-due-date">
+          </div>
+          <div class="task-detail__field">
+            <label class="task-detail__label">Приоритет</label>
+            <select class="input task-detail__select" id="add-priority">
+              <option value="low">Низкий</option>
+              <option value="medium">Средний</option>
+              <option value="high">Высокий</option>
+              <option value="critical">Критикал</option>
+            </select>
+          </div>
+          <div class="task-detail__field">
+            <label class="task-detail__label">Статус</label>
+            <select class="input task-detail__select" id="add-status">
+              <option value="backlog">Backlog</option>
+              <option value="todo">Todo</option>
+              <option value="in-progress">In Progress</option>
+              <option value="done">Done</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div class="modal__footer">
+        <button type="button" class="btn btn--ghost" data-close="modal-add">Отмена</button>
+        <button type="button" class="btn btn--primary" id="btn-create-task">Создать</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Add sphere -->
+  <div class="modal" id="modal-add-sphere" role="dialog" aria-modal="true" aria-labelledby="modal-add-sphere-title" hidden>
+    <div class="modal__backdrop" data-close="modal-add-sphere"></div>
+    <div class="modal__content glass glass--elevated">
+      <div class="modal__header">
+        <h2 id="modal-add-sphere-title" class="modal__title">Новая сфера</h2>
+        <button type="button" class="btn btn--ghost modal__close" data-close="modal-add-sphere" aria-label="Закрыть">&times;</button>
+      </div>
+      <div class="modal__body">
+        <div class="task-detail">
+          <div class="task-detail__field">
+            <label class="task-detail__label">Название сферы</label>
+            <input type="text" class="input task-detail__input" id="add-sphere-name" placeholder="Например: Учёба, Здоровье">
+          </div>
+        </div>
+      </div>
+      <div class="modal__footer">
+        <button type="button" class="btn btn--ghost" data-close="modal-add-sphere">Отмена</button>
+        <button type="button" class="btn btn--primary" id="btn-create-sphere">Создать</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

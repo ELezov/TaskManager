@@ -1,0 +1,4 @@
+# Deploy-ready: static site (HTML/CSS/JS)
+[build]
+  publish = "."
+  command = "echo 'No build step'"

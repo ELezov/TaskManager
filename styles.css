@@ -1195,6 +1195,10 @@ select.input {
   display: none;
 }
 
+.app.focus-mode .sphere-notes {
+  display: none;
+}
+
 .app.focus-mode .board {
   grid-template-columns: repeat(3, 1fr);
 }

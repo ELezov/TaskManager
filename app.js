@@ -4,6 +4,7 @@
  */
 
 const STORAGE_KEY = 'taskmanager-data';
+const FOCUS_MODE_KEY = 'taskmanager-focus';
 const STATUSES = ['backlog', 'todo', 'in-progress', 'done'];
 const PRIORITIES = [
   { value: 'low', label: 'Низкий' },
@@ -17,7 +18,7 @@ const MENTAL_WEIGHTS = [
   { value: 'heavy', label: 'Тяжёлая' },
 ];
 
-const DEFAULT_SPHERE_IDS = { work: 'sphere-work', life: 'sphere-life' };
+const DEFAULT_SPHERE_IDS = { work: 'work', life: 'life' };
 const VALID_PRIORITIES = PRIORITIES.map((p) => p.value);
 const VALID_MENTAL_WEIGHTS = MENTAL_WEIGHTS.map((w) => w.value);
 const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
@@ -273,12 +274,46 @@ let currentSphereId = null;
 let inbox = [];
 /** @type {string|null} ISO date (YYYY-MM-DD) когда инбокс последний раз опустел */
 let inboxEmptySince = null;
+/** Режим фокуса: скрыты сферы и столбец бэклога */
+let focusMode = false;
 
 function getDefaultSpheres() {
   return [
-    { id: DEFAULT_SPHERE_IDS.work, name: 'Работа', order: 0, notes: [] },
-    { id: DEFAULT_SPHERE_IDS.life, name: 'Жизнь', order: 1, notes: [] },
+    { id: 'work', name: 'Работа', order: 0, notes: [] },
+    { id: 'life', name: 'Жизнь', order: 1, notes: [] },
   ];
+}
+
+/** Транслитерация кириллицы в латиницу для slug. */
+const CYR_TO_LAT = {
+  а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z',
+  и: 'i', й: 'j', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r',
+  с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'c', ч: 'ch', ш: 'sh', щ: 'sch',
+  ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya',
+};
+
+function slugFromName(name) {
+  const s = String(name).trim().toLowerCase();
+  let out = '';
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (CYR_TO_LAT[c]) out += CYR_TO_LAT[c];
+    else if (/[a-z0-9]/.test(c)) out += c;
+    else if (/\s/.test(c) && out && out.slice(-1) !== '-') out += '-';
+  }
+  return out.replace(/-+/g, '-').replace(/^-|-$/g, '') || 'sphere';
+}
+
+/** Уникальный текстовый идентификатор сферы по имени (при создании). existingIds — дополнительные id для проверки при мерже. */
+function sphereIdFromName(name, existingIds = []) {
+  const base = slugFromName(name);
+  let id = base;
+  let n = 1;
+  const has = (sid) => spheres.some((s) => s.id === sid) || existingIds.includes(sid);
+  while (has(id)) {
+    id = `${base}-${++n}`;
+  }
+  return id;
 }
 
 function loadFromStorage() {
@@ -323,9 +358,13 @@ function saveToStorage() {
   }));
 }
 
-function normalizeSphere(s) {
+function normalizeSphere(s, existingIds = []) {
+  let id = s.id != null ? String(s.id).trim() : '';
+  if (id === 'sphere-work') id = 'work';
+  if (id === 'sphere-life') id = 'life';
+  if (!id) id = sphereIdFromName(s.name ?? 'Сфера', existingIds);
   return {
-    id: s.id ?? uid(),
+    id,
     name: String(s.name ?? 'Сфера').trim() || 'Сфера',
     order: typeof s.order === 'number' ? s.order : 0,
     notes: Array.isArray(s.notes)
@@ -339,7 +378,10 @@ function normalizeSphere(s) {
 }
 
 function normalizeTask(t, defaultSphereId) {
-  const sphereId = t.sphereId && spheres.some((s) => s.id === t.sphereId) ? t.sphereId : (defaultSphereId || spheres[0]?.id);
+  let sphereId = t.sphereId;
+  if (sphereId === 'sphere-work') sphereId = 'work';
+  if (sphereId === 'sphere-life') sphereId = 'life';
+  sphereId = sphereId && spheres.some((s) => s.id === sphereId) ? sphereId : (defaultSphereId || spheres[0]?.id);
   return {
     id: t.id ?? uid(),
     title: String(t.title ?? 'Без названия'),
@@ -386,17 +428,123 @@ function exportJSON() {
   URL.revokeObjectURL(url);
 }
 
+/** Сравнивает две задачи по основным параметрам (без id/createdAt/updatedAt). */
+function tasksAreIdentical(a, b) {
+  return (
+    (a.title || '') === (b.title || '') &&
+    (a.description || '').trim() === (b.description || '').trim() &&
+    (a.dueDate || null) === (b.dueDate || null) &&
+    (a.priority || 'medium') === (b.priority || 'medium') &&
+    (a.mentalWeight || 'medium') === (b.mentalWeight || 'medium') &&
+    (a.status || 'backlog') === (b.status || 'backlog') &&
+    (a.sphereId || '') === (b.sphereId || '') &&
+    (a.notes || []).length === (b.notes || []).length &&
+    (a.subtasks || []).length === (b.subtasks || []).length
+  );
+}
+
+/** Параметры задачи для отображения в виджете сравнения */
+function getTaskCompareFields(task) {
+  const sphere = spheres.find((s) => s.id === task.sphereId);
+  return [
+    { label: 'Название', value: task.title || '—' },
+    { label: 'Описание', value: (task.description || '').trim() || '—' },
+    { label: 'Срок', value: task.dueDate ? formatDateOnly(task.dueDate) : '—' },
+    { label: 'Приоритет', value: PRIORITIES.find((p) => p.value === task.priority)?.label ?? task.priority },
+    { label: 'Мысленная тяжесть', value: MENTAL_WEIGHTS.find((w) => w.value === (task.mentalWeight ?? 'medium'))?.label ?? task.mentalWeight },
+    { label: 'Статус', value: task.status },
+    { label: 'Сфера', value: sphere?.name ?? task.sphereId },
+    { label: 'Заметок', value: String((task.notes || []).length) },
+    { label: 'Шажков', value: String((task.subtasks || []).length) },
+  ];
+}
+
+function renderComparePanel(listEl, task) {
+  if (!listEl) return;
+  listEl.innerHTML = '';
+  getTaskCompareFields(task).forEach(({ label, value }) => {
+    const dt = document.createElement('dt');
+    dt.className = 'compare-panel__term';
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    dd.className = 'compare-panel__value';
+    dd.textContent = value;
+    listEl.appendChild(dt);
+    listEl.appendChild(dd);
+  });
+}
+
+/** Виджет сравнения двух версий задачи. Возвращает Promise<'keep' | 'replace'>. */
+function showTaskCompareDialog(currentTask, importedTask) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('modal-task-compare');
+    const currentList = document.getElementById('compare-current-list');
+    const importedList = document.getElementById('compare-imported-list');
+    if (!modal || !currentList || !importedList) {
+      resolve('keep');
+      return;
+    }
+    renderComparePanel(currentList, currentTask);
+    renderComparePanel(importedList, importedTask);
+    modal.hidden = false;
+
+    const finish = (choice) => {
+      modal.hidden = true;
+      resolve(choice);
+    };
+
+    document.getElementById('compare-keep-current').onclick = () => finish('keep');
+    document.getElementById('compare-replace').onclick = () => finish('replace');
+    document.getElementById('compare-modal-close').onclick = () => finish('keep');
+    document.getElementById('compare-modal-backdrop').onclick = () => finish('keep');
+  });
+}
+
 function importJSON(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const data = JSON.parse(reader.result);
-        spheres = Array.isArray(data.spheres) && data.spheres.length > 0
-          ? data.spheres.map(normalizeSphere)
-          : getDefaultSpheres();
+        const defaultSpheres = getDefaultSpheres();
+
+        // Сферы: добавляем только новые по id; при совпадении id оставляем текущую и идём к сравнению задач
+        let mergedSpheres = [...spheres];
+        if (Array.isArray(data.spheres) && data.spheres.length > 0) {
+          for (const s of data.spheres) {
+            const norm = normalizeSphere(s, mergedSpheres.map((x) => x.id));
+            const existing = mergedSpheres.find((x) => x.id === norm.id);
+            if (!existing) {
+              mergedSpheres.push(norm);
+            }
+            // при совпадении id сферу не спрашиваем — оставляем текущую
+          }
+        } else if (spheres.length === 0) {
+          mergedSpheres = defaultSpheres;
+        }
+        spheres = mergedSpheres;
         const defaultSphereId = spheres[0]?.id;
-        tasks = Array.isArray(data.tasks) ? data.tasks.map((t) => normalizeTask(t, defaultSphereId)) : [];
+
+        // Задачи: при совпадении id показываем виджет сравнения (слева текущая, справа загружаемая)
+        let mergedTasks = [...tasks];
+        if (Array.isArray(data.tasks)) {
+          for (const t of data.tasks) {
+            const norm = normalizeTask(t, defaultSphereId);
+            const existing = mergedTasks.find((x) => x.id === norm.id);
+            if (!existing) {
+              mergedTasks.push(norm);
+            } else if (tasksAreIdentical(existing, norm)) {
+              // Параметры совпадают — не подменяем и не показываем окно сравнения
+            } else {
+              const choice = await showTaskCompareDialog(existing, norm);
+              if (choice === 'replace') {
+                mergedTasks = mergedTasks.map((x) => (x.id === norm.id ? norm : x));
+              }
+            }
+          }
+        }
+        tasks = mergedTasks;
+
         if (!currentSphereId || !spheres.some((s) => s.id === currentSphereId)) {
           currentSphereId = spheres[0]?.id ?? null;
         }
@@ -420,6 +568,21 @@ function importJSON(file) {
 
 function getCurrentSphere() {
   return spheres.find((s) => s.id === currentSphereId) ?? null;
+}
+
+function applyFocusMode() {
+  const app = document.querySelector('.app');
+  const checkbox = document.getElementById('focus-mode');
+  if (app) app.classList.toggle('focus-mode', focusMode);
+  if (checkbox) checkbox.checked = focusMode;
+}
+
+function setFocusMode(on) {
+  focusMode = Boolean(on);
+  try {
+    localStorage.setItem(FOCUS_MODE_KEY, focusMode ? 'true' : 'false');
+  } catch (_) {}
+  applyFocusMode();
 }
 
 /** Задачи текущей сферы в Todo/In Progress, не обновлявшиеся STALE_DAYS дней (идея Дорофеева: «зависание»). */
@@ -820,7 +983,7 @@ function createSphereFromModal() {
   const name = document.getElementById('add-sphere-name').value.trim() || 'Новая сфера';
   const maxOrder = spheres.length ? Math.max(...spheres.map((s) => s.order)) : -1;
   const sphere = {
-    id: uid(),
+    id: sphereIdFromName(name),
     name,
     order: maxOrder + 1,
     notes: [],
@@ -1580,7 +1743,6 @@ function setupModals() {
     if (!file) return;
     importJSON(file)
       .then(() => {
-        alert('Данные загружены.');
         e.target.value = '';
         if (currentTriggersSectionId) renderTriggerList(currentTriggersSectionId);
         closeSettingsOverlay();
@@ -1596,11 +1758,14 @@ function init() {
   loadFromStorage();
   document.body.dataset.sphere = currentSphereId === DEFAULT_SPHERE_IDS.life ? 'life' : 'work';
   renderTabs();
+  focusMode = localStorage.getItem(FOCUS_MODE_KEY) === 'true';
+  applyFocusMode();
   renderSphereNotes();
   renderBoard();
   updateInboxBadge();
   updateBoardTip();
   setupModals();
+  document.getElementById('focus-mode').addEventListener('change', (e) => setFocusMode(e.target.checked));
   STATUSES.forEach((status) => {
     const container = document.querySelector(`[data-column="${status}"]`);
     if (container) setupColumnDrop(container, status);

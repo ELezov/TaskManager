@@ -350,6 +350,72 @@ select.input {
   align-items: center;
 }
 
+.focus-switcher {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.focus-switcher:hover {
+  color: var(--text);
+}
+
+.focus-switcher__input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.focus-switcher__track {
+  display: flex;
+  align-items: center;
+  width: 40px;
+  height: 22px;
+  padding: 2px;
+  border-radius: 11px;
+  background: var(--glass-2);
+  border: 1px solid var(--border-hair);
+  transition: background 0.2s ease, border-color 0.2s ease;
+  flex-shrink: 0;
+}
+
+.focus-switcher__input:focus-visible + .focus-switcher__track {
+  box-shadow: var(--ring);
+}
+
+.focus-switcher__thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform 0.2s ease, background 0.2s ease;
+}
+
+.focus-switcher__input:checked + .focus-switcher__track {
+  background: color-mix(in oklab, var(--accent), transparent 60%);
+  border-color: var(--accent);
+}
+
+.focus-switcher__input:checked + .focus-switcher__track .focus-switcher__thumb {
+  transform: translateX(18px);
+  background: var(--accent);
+}
+
+.focus-switcher__label {
+  white-space: nowrap;
+}
+
 .header__settings {
   font-size: 2.5rem;
   line-height: 1;
@@ -1124,14 +1190,33 @@ select.input {
   align-items: start;
 }
 
+/* Режим фокуса: сферы скрыты, бэклог скрыт, контент поднят */
+.app.focus-mode .tabs {
+  display: none;
+}
+
+.app.focus-mode .board {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.app.focus-mode .column[data-status="backlog"] {
+  display: none;
+}
+
 @media (max-width: 1200px) {
   .board {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .app.focus-mode .board {
     grid-template-columns: repeat(2, 1fr);
   }
 }
 
 @media (max-width: 640px) {
   .board {
+    grid-template-columns: 1fr;
+  }
+  .app.focus-mode .board {
     grid-template-columns: 1fr;
   }
 }
@@ -1384,6 +1469,66 @@ select.input {
 
 .modal__footer .btn:first-child {
   margin-right: auto;
+}
+
+/* Виджет сравнения задач при импорте */
+.compare-modal__content {
+  max-width: 936px; /* 720 × 1.3 */
+}
+
+.compare-modal__body {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-5);
+  padding: var(--space-5);
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.compare-panel {
+  padding: var(--space-4);
+  border-radius: var(--radius);
+  background: var(--glass-1);
+  border: 1px solid var(--border-hair);
+}
+
+.compare-panel__title {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.compare-panel__list {
+  margin: 0;
+  display: grid;
+  gap: var(--space-2) var(--space-4);
+  grid-template-columns: auto 1fr;
+  font-size: var(--text-sm);
+}
+
+.compare-panel__term {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.compare-panel__value {
+  margin: 0;
+  color: var(--text);
+  word-break: break-word;
+}
+
+.compare-modal__footer {
+  justify-content: center;
+  gap: var(--space-4);
+}
+
+@media (max-width: 640px) {
+  .compare-modal__body {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Task detail form */

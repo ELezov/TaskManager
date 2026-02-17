@@ -30,6 +30,7 @@ const POPOVER_OFFSET_V = 8;
 const INBOX_TIMER_MINUTES = 15;
 const INBOX_TIP_THRESHOLD = 5;
 const STALE_DAYS = 7;
+const ARCHIVE_AFTER_DAYS = 3;
 
 /** Спусковые крючки «Что мне надо сделать?» — 6 разделов по майнд-карте */
 const TRIGGER_GRAPH = [
@@ -262,7 +263,7 @@ function formatDateOnly(iso) {
 
 /** @typedef {{ id: string, name: string, order: number, notes: { id: string, text: string, createdAt: string }[] }} Sphere */
 /** @typedef {{ id: string, text: string, done: boolean }} Subtask */
-/** @typedef {{ id: string, title: string, description: string, status: string, priority: string, mentalWeight: string, sphereId: string, dueDate: string|null, createdAt: string, updatedAt: string, notes: { id: string, text: string, createdAt: string }[], subtasks: Subtask[] }} Task */
+/** @typedef {{ id: string, title: string, description: string, status: string, priority: string, mentalWeight: string, sphereId: string, dueDate: string|null, createdAt: string, updatedAt: string, archivedAt: string|null, notes: { id: string, text: string, createdAt: string }[], subtasks: Subtask[] }} Task */
 
 /** @type {Sphere[]} */
 let spheres = [];
@@ -393,6 +394,7 @@ function normalizeTask(t, defaultSphereId) {
     dueDate: t.dueDate && DATE_ONLY_REGEX.test(t.dueDate) ? t.dueDate : null,
     createdAt: t.createdAt ?? nowISO(),
     updatedAt: t.updatedAt ?? nowISO(),
+    archivedAt: t.archivedAt && /^\d{4}-\d{2}-\d{2}T/.test(t.archivedAt) ? t.archivedAt : null,
     notes: Array.isArray(t.notes)
       ? t.notes.map((n) => ({
           id: n.id ?? uid(),
@@ -568,6 +570,80 @@ function importJSON(file) {
 
 function getCurrentSphere() {
   return spheres.find((s) => s.id === currentSphereId) ?? null;
+}
+
+/** Переносит в архив задачи в Done старше ARCHIVE_AFTER_DAYS дней. */
+function runAutoArchive() {
+  const now = Date.now();
+  const threshold = ARCHIVE_AFTER_DAYS * 24 * 60 * 60 * 1000;
+  let changed = false;
+  tasks.forEach((t) => {
+    if (t.status !== 'done' || t.archivedAt) return;
+    const updated = new Date(t.updatedAt).getTime();
+    if (now - updated >= threshold) {
+      t.archivedAt = nowISO();
+      changed = true;
+    }
+  });
+  if (changed) saveToStorage();
+}
+
+function getArchivedTasks() {
+  return tasks.filter((t) => t.archivedAt).sort((a, b) => (b.archivedAt || '').localeCompare(a.archivedAt || ''));
+}
+
+function unarchiveTask(taskId) {
+  const t = tasks.find((x) => x.id === taskId);
+  if (!t) return;
+  t.archivedAt = null;
+  saveToStorage();
+  renderBoard();
+  renderArchiveList();
+}
+
+function renderArchiveList() {
+  const list = document.getElementById('archive-list');
+  if (!list) return;
+  const archived = getArchivedTasks();
+  list.innerHTML = '';
+  archived.forEach((task) => {
+    const sphere = spheres.find((s) => s.id === task.sphereId);
+    const li = document.createElement('li');
+    li.className = 'archive-list__item';
+    const title = document.createElement('span');
+    title.className = 'archive-list__title';
+    title.textContent = task.title || 'Без названия';
+    const meta = document.createElement('span');
+    meta.className = 'archive-list__meta';
+    meta.textContent = [sphere?.name, task.archivedAt ? formatDateOnly(task.archivedAt.slice(0, 10)) : ''].filter(Boolean).join(' · ');
+    const restoreBtn = document.createElement('button');
+    restoreBtn.type = 'button';
+    restoreBtn.className = 'btn btn--ghost archive-list__restore';
+    restoreBtn.textContent = 'Восстановить в Done';
+    restoreBtn.addEventListener('click', () => unarchiveTask(task.id));
+    li.appendChild(title);
+    li.appendChild(meta);
+    li.appendChild(restoreBtn);
+    list.appendChild(li);
+  });
+  if (archived.length === 0) {
+    const empty = document.createElement('li');
+    empty.className = 'archive-list__empty';
+    empty.textContent = 'Архив пуст';
+    list.appendChild(empty);
+  }
+}
+
+function openArchiveOverlay() {
+  runAutoArchive();
+  const overlay = document.getElementById('archive-overlay');
+  if (overlay) overlay.hidden = false;
+  renderArchiveList();
+}
+
+function closeArchiveOverlay() {
+  const overlay = document.getElementById('archive-overlay');
+  if (overlay) overlay.hidden = true;
 }
 
 function applyFocusMode() {
@@ -1003,7 +1079,8 @@ function renderBoard() {
     const container = document.querySelector(`[data-column="${status}"]`);
     if (!container) continue;
     container.innerHTML = '';
-    const byStatus = list.filter((t) => t.status === status);
+    let byStatus = list.filter((t) => t.status === status);
+    if (status === 'done') byStatus = byStatus.filter((t) => !t.archivedAt);
     byStatus.forEach((task) => container.appendChild(createCard(task)));
   }
   updateBoardTip();
@@ -1026,6 +1103,7 @@ function setupColumnDrop(container, status) {
     if (task && task.sphereId === currentSphereId && task.status !== status) {
       task.status = status;
       task.updatedAt = nowISO();
+      if (status === 'done') task.archivedAt = null;
       saveToStorage();
       renderBoard();
     }
@@ -1693,6 +1771,10 @@ function setupModals() {
     btn.addEventListener('click', () => openAddModal(btn.dataset.status));
   });
 
+  document.getElementById('btn-open-archive').addEventListener('click', openArchiveOverlay);
+  document.getElementById('archive-overlay-close').addEventListener('click', closeArchiveOverlay);
+  document.getElementById('archive-overlay-backdrop').addEventListener('click', closeArchiveOverlay);
+
   document.getElementById('btn-open-calendar').addEventListener('click', openCalendarOverlay);
   document.getElementById('calendar-close').addEventListener('click', closeCalendarOverlay);
   document.getElementById('calendar-overlay-backdrop').addEventListener('click', closeCalendarOverlay);
@@ -1760,6 +1842,7 @@ function init() {
   renderTabs();
   focusMode = localStorage.getItem(FOCUS_MODE_KEY) === 'true';
   applyFocusMode();
+  runAutoArchive();
   renderSphereNotes();
   renderBoard();
   updateInboxBadge();

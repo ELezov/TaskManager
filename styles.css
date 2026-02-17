@@ -764,6 +764,119 @@ select.input {
   padding: var(--space-3);
 }
 
+/* Архив */
+.archive-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 93;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+  background: rgba(0, 0, 0, 0.4);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+
+.archive-overlay[hidden] {
+  display: none;
+}
+
+.archive-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+}
+
+.archive-overlay__content {
+  position: relative;
+  width: 100%;
+  max-width: 480px;
+  max-height: 85vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1), var(--shadow-2), var(--inset);
+}
+
+.archive-overlay__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-hair);
+  flex-shrink: 0;
+}
+
+.archive-overlay__title {
+  margin: 0;
+  font-size: var(--text-lg);
+  font-weight: 600;
+}
+
+.archive-overlay__close {
+  font-size: 1.5rem;
+  line-height: 1;
+  padding: var(--space-2);
+}
+
+.archive-overlay__body {
+  padding: var(--space-5);
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.archive-overlay__hint {
+  margin: 0 0 var(--space-4);
+  font-size: var(--text-sm);
+  color: var(--muted);
+}
+
+.archive-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.archive-list__item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  background: var(--glass-1);
+  border: 1px solid var(--border-hair);
+}
+
+.archive-list__title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.archive-list__meta {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.archive-list__restore {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+}
+
+.archive-list__empty {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  padding: var(--space-4);
+}
+
 /* Виджет настроек (шестерёнка) */
 .settings-overlay {
   position: fixed;
@@ -1241,8 +1354,27 @@ select.input {
   color: var(--text);
 }
 
+.column__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+  flex-shrink: 0;
+}
+
+.column__head .column__title {
+  margin: 0;
+}
+
+.column__archive-btn {
+  flex-shrink: 0;
+  font-size: var(--text-xs);
+}
+
 .column__cards {
   flex: 1;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -1272,6 +1404,7 @@ select.input {
 
 /* Task card */
 .card {
+  flex-shrink: 0;
   position: relative;
   padding: var(--space-4);
   border-radius: 14px;

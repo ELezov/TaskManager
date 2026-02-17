@@ -69,11 +69,29 @@
           <button type="button" class="btn btn--ghost column__add" data-status="in-progress">+ Добавить задачу</button>
         </section>
         <section class="column glass" data-status="done">
-          <h2 class="column__title">Done</h2>
+          <div class="column__head column__head--done">
+            <h2 class="column__title">Done</h2>
+            <button type="button" class="btn btn--ghost column__archive-btn" id="btn-open-archive" aria-label="Открыть архив">В Архив</button>
+          </div>
           <div class="column__cards" data-column="done"></div>
           <button type="button" class="btn btn--ghost column__add" data-status="done">+ Добавить задачу</button>
         </section>
       </main>
+    </div>
+  </div>
+
+  <!-- Архив: список задач, перенесённых из Done через 3 дня -->
+  <div class="archive-overlay" id="archive-overlay" role="dialog" aria-modal="true" aria-labelledby="archive-overlay-title" hidden>
+    <div class="archive-overlay__backdrop" id="archive-overlay-backdrop"></div>
+    <div class="archive-overlay__content glass glass--elevated">
+      <div class="archive-overlay__header">
+        <h2 id="archive-overlay-title" class="archive-overlay__title">Архив</h2>
+        <button type="button" class="btn btn--ghost archive-overlay__close" id="archive-overlay-close" aria-label="Закрыть">&times;</button>
+      </div>
+      <div class="archive-overlay__body">
+        <p class="archive-overlay__hint">Задачи из Done старше 3 дней переносятся сюда.</p>
+        <ul class="archive-list" id="archive-list"></ul>
+      </div>
     </div>
   </div>
 

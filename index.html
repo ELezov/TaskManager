@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Task Manager — Liquid Glass</title>
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=2">
 </head>
 <body>
   <a href="#main-content" class="skip-link">Перейти к контенту</a>
@@ -69,12 +69,12 @@
           <button type="button" class="btn btn--ghost column__add" data-status="in-progress">+ Добавить задачу</button>
         </section>
         <section class="column glass" data-status="done">
-          <div class="column__head column__head--done">
-            <h2 class="column__title">Done</h2>
-            <button type="button" class="btn btn--ghost column__archive-btn" id="btn-open-archive" aria-label="Открыть архив">В Архив</button>
-          </div>
+          <h2 class="column__title">Done</h2>
           <div class="column__cards" data-column="done"></div>
-          <button type="button" class="btn btn--ghost column__add" data-status="done">+ Добавить задачу</button>
+          <a href="#" class="column__to-archive" id="btn-open-archive" aria-label="Перейти в архив">
+            <span class="column__to-archive-text">В Архив</span>
+            <span class="column__to-archive-arrow" aria-hidden="true">→</span>
+          </a>
         </section>
       </main>
     </div>
@@ -287,6 +287,7 @@
         </div>
       </div>
       <div class="modal__footer">
+        <button type="button" class="btn btn--ghost" id="btn-archive-task" aria-label="Отправить в архив" hidden>В архив</button>
         <button type="button" class="btn btn--ghost" id="btn-delete-task">Удалить задачу</button>
         <button type="button" class="btn btn--primary" id="btn-save-task">Сохранить</button>
       </div>

@@ -601,6 +601,16 @@ function unarchiveTask(taskId) {
   renderArchiveList();
 }
 
+/** Ручное архивирование задачи (из модалки или из Done). */
+function archiveTask(taskId) {
+  const t = tasks.find((x) => x.id === taskId);
+  if (!t) return;
+  t.archivedAt = nowISO();
+  saveToStorage();
+  renderBoard();
+  renderArchiveList();
+}
+
 function renderArchiveList() {
   const list = document.getElementById('archive-list');
   if (!list) return;
@@ -1206,6 +1216,9 @@ function openTaskModal(taskId) {
   document.getElementById('detail-mental-weight').value = task.mentalWeight ?? 'medium';
   document.getElementById('detail-status').value = task.status;
 
+  const archiveBtn = document.getElementById('btn-archive-task');
+  if (archiveBtn) archiveBtn.hidden = task.status !== 'done' || !!task.archivedAt;
+
   const subtasksBlock = document.getElementById('task-detail-subtasks');
   const summaryEl = document.getElementById('task-detail-subtasks-summary');
   const weight = task.mentalWeight ?? 'medium';
@@ -1771,7 +1784,16 @@ function setupModals() {
     btn.addEventListener('click', () => openAddModal(btn.dataset.status));
   });
 
-  document.getElementById('btn-open-archive').addEventListener('click', openArchiveOverlay);
+  document.getElementById('btn-open-archive').addEventListener('click', (e) => {
+    e.preventDefault();
+    openArchiveOverlay();
+  });
+  document.getElementById('btn-archive-task').addEventListener('click', () => {
+    if (currentTaskId) {
+      archiveTask(currentTaskId);
+      closeTaskModal();
+    }
+  });
   document.getElementById('archive-overlay-close').addEventListener('click', closeArchiveOverlay);
   document.getElementById('archive-overlay-backdrop').addEventListener('click', closeArchiveOverlay);
 
